@@ -1,8 +1,8 @@
 # Fabric notebook: Semantic Model Governance Scan
 #
 # Admin setup:
-# 1. Create or select a Fabric workspace for this solution.
-# 2. Create a Lakehouse and attach it to this notebook.
+# 1. Run scripts/provision-fabric-solution.ps1, or create/select a Fabric workspace manually.
+# 2. Create a Lakehouse and attach it to this notebook. The provisioner does this automatically.
 # 3. Optional but recommended: create a Fabric Environment and install this repo:
 #    %pip install git+https://github.com/oahmad1/fabric_duplicate_semanticmodel_app.git
 # 4. Configure WORKSPACE_NAMES or create config_workspaces in the Lakehouse.
@@ -331,4 +331,3 @@ def run_scan() -> str:
 
 run_id = run_scan()
 print(f"Semantic model governance scan completed. run_id={run_id}")
-

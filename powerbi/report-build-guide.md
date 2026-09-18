@@ -2,6 +2,16 @@
 
 This solution is intended to be consumed through a Power BI report published as an App from the Fabric workspace.
 
+If you already have a semantic model over the governance tables, the provisioner can create a blank report shell:
+
+```powershell
+.\scripts\provision-fabric-solution.ps1 `
+  -CreateReportShell `
+  -ReportSemanticModelId "33333333-3333-3333-3333-333333333333"
+```
+
+You still need to add visuals and pages using the guidance below.
+
 ## Data source
 
 Connect the report to the Lakehouse SQL endpoint or Fabric Warehouse that contains these tables:
@@ -98,4 +108,3 @@ After building the report:
 3. Add the report to the app audience.
 4. Grant the audience access to the app.
 5. Document the refresh schedule and support owner in the app description.
-

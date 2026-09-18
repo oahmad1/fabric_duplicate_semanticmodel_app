@@ -2,7 +2,7 @@
 
 This guide helps Fabric admins deploy the solution so end users can view duplicate semantic model findings without writing code.
 
-For a condensed rollout view, use the [Deployment Checklist](deployment-checklist.md).
+For one-command setup, see [Automated Provisioning](automated-provisioning.md). For a condensed rollout view, use the [Deployment Checklist](deployment-checklist.md).
 
 ## Prerequisites
 
@@ -10,7 +10,38 @@ For a condensed rollout view, use the [Deployment Checklist](deployment-checklis
 - Permission to read the workspaces and semantic models you want to scan.
 - Power BI tenant setting enabled for Execute Queries REST API.
 - A Fabric capacity for scheduled notebook execution.
+- Azure CLI installed if using automated provisioning.
 - Optional: a service principal or managed identity strategy for production scheduling.
+
+## Recommended path: automated provisioning
+
+Run the provisioning script from a local terminal:
+
+```powershell
+git clone https://github.com/oahmad1/fabric_duplicate_semanticmodel_app.git
+cd fabric_duplicate_semanticmodel_app
+
+.\scripts\provision-fabric-solution.ps1 `
+  -TenantId "00000000-0000-0000-0000-000000000000" `
+  -WorkspaceName "Semantic Model Governance" `
+  -LakehouseName "SemanticModelGovernanceLH"
+```
+
+The script:
+
+1. Runs `az login --allow-no-subscriptions`, optionally with the provided tenant ID.
+2. Creates or reuses the Fabric workspace.
+3. Creates or reuses the Lakehouse.
+4. Creates or updates the sample-data notebook.
+5. Creates or updates the scan notebook.
+6. Binds both notebooks to the Lakehouse through Fabric notebook metadata.
+7. Creates or updates the sample-load and scan Data Pipelines.
+
+After the script completes, trigger the sample-load pipeline, continue at [Step 4: Configure workspace scope](#step-4-configure-workspace-scope), then build the report and publish the App.
+
+## Manual path
+
+Use the manual path when you cannot run local provisioning scripts or when your tenant requires centrally managed workspace creation.
 
 ## Step 1: Create the solution workspace
 
@@ -122,7 +153,9 @@ Minimum report pages:
 
 ## Step 8: Schedule the scan
 
-Create a Fabric Data Pipeline:
+If you used automated provisioning, the scan pipeline already exists as `Semantic Model Governance - Scan`. Open it, test it, then add a schedule.
+
+If you used manual setup, create a Fabric Data Pipeline:
 
 1. Add a Notebook activity.
 2. Select `semantic_model_governance_scan.py`.
@@ -135,6 +168,19 @@ Recommended schedule:
 - MVP: weekly
 - Active governance program: nightly
 - Large tenant: split by domain/workspace group and stagger schedules
+
+## Optional: Create a blank report shell
+
+After governance tables exist and you have created or identified the semantic model that points to those tables, rerun the provisioner with:
+
+```powershell
+.\scripts\provision-fabric-solution.ps1 `
+  -TenantId "00000000-0000-0000-0000-000000000000" `
+  -CreateReportShell `
+  -ReportSemanticModelId "33333333-3333-3333-3333-333333333333"
+```
+
+This creates a blank Power BI report bound to the semantic model. Use [Power BI Report Build Guide](../powerbi/report-build-guide.md) to add the recommended pages and visuals.
 
 ## Step 9: Publish the App
 

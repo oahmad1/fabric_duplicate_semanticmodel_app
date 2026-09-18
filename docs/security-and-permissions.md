@@ -14,6 +14,18 @@ The scan identity needs:
 - Permission to read semantic model data source metadata when available.
 - Write access to the solution Lakehouse or Warehouse.
 
+## Provisioning access
+
+The identity running `scripts\provision-fabric-solution.ps1` needs:
+
+- Azure CLI authentication to the Fabric tenant.
+- Permission to create Fabric workspaces, or access to an existing workspace with the requested name.
+- Permission to create Lakehouses, Notebooks, and Data Pipelines in the solution workspace.
+- Permission to create Power BI reports if using optional report-shell creation.
+- Optional capacity assignment rights if `-CapacityId` is used during workspace creation.
+
+The script does not request or store passwords. It uses `az login` and in-memory Fabric and Power BI API access tokens from Azure CLI.
+
 ## End-user access
 
 End users only need access to the published App/report. They do not need direct access to the scan notebook or metadata export tables unless your governance process requires it.
@@ -35,4 +47,3 @@ Treat these outputs as internal metadata. Do not publish raw tables outside appr
 ## Production identity
 
 For production, prefer a dedicated service principal, managed identity, or approved automation identity over a personal user account. Validate the identity has only the permissions required for the configured scan scope.
-
