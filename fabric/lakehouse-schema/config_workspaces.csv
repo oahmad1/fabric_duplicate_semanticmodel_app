@@ -1,0 +1,5 @@
+workspace_id,workspace_name,enabled,notes
+,Dummy Enterprise BI,true,Replace with a Fabric workspace ID or exact workspace name
+,Dummy Executive Reporting,true,Replace with a Fabric workspace ID or exact workspace name
+,Dummy Regional Sales,true,Replace with a Fabric workspace ID or exact workspace name
+

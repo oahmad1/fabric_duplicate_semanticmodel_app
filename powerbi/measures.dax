@@ -1,0 +1,39 @@
+Finding Count =
+COUNTROWS ( semantic_model_findings )
+
+Likely Duplicate Count =
+CALCULATE (
+    [Finding Count],
+    semantic_model_findings[classification] = "likely_duplicate"
+)
+
+High Overlap Count =
+CALCULATE (
+    [Finding Count],
+    semantic_model_findings[classification] = "high_overlap"
+)
+
+Average Duplicate Score =
+AVERAGE ( semantic_model_findings[duplicate_score] )
+
+Average Overlap Score =
+AVERAGE ( semantic_model_findings[overlap_score] )
+
+Max Duplicate Score =
+MAX ( semantic_model_findings[duplicate_score] )
+
+High Confidence Findings =
+CALCULATE (
+    [Finding Count],
+    semantic_model_findings[confidence] = "high"
+)
+
+Models Scanned =
+DISTINCTCOUNT ( semantic_model_inventory[model_id] )
+
+Workspaces Scanned =
+DISTINCTCOUNT ( semantic_model_inventory[workspace_id] )
+
+Warnings =
+COUNTROWS ( semantic_model_warnings )
+
