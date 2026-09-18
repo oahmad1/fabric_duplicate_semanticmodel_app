@@ -32,12 +32,16 @@ The script:
 1. Runs `az login --allow-no-subscriptions`, optionally with the provided tenant ID.
 2. Creates or reuses the Fabric workspace.
 3. Creates or reuses the Lakehouse.
-4. Creates or updates the sample-data notebook.
-5. Creates or updates the scan notebook.
-6. Binds both notebooks to the Lakehouse through Fabric notebook metadata.
-7. Creates or updates the sample-load and scan Data Pipelines.
+4. Creates or updates the initialization notebook.
+5. Creates or updates the sample-data notebook.
+6. Creates or updates the scan notebook.
+7. Binds the notebooks to the Lakehouse through Fabric notebook metadata.
+8. Creates or updates the initialization, sample-load, and scan Data Pipelines.
+9. Runs initialization by default to create empty governance tables.
+10. Creates or updates the Direct Lake semantic model over those tables.
+11. Optionally clones and rebinds a report template when `-TemplateReportId` is supplied.
 
-After the script completes, trigger the sample-load pipeline, continue at [Step 4: Configure workspace scope](#step-4-configure-workspace-scope), then build the report and publish the App.
+After the script completes, trigger the sample-load pipeline, refresh the generated semantic model, continue at [Step 4: Configure workspace scope](#step-4-configure-workspace-scope), then build or clone the report and publish the App.
 
 ## Manual path
 
@@ -54,9 +58,10 @@ Semantic Model Governance
 Recommended workspace contents:
 
 - One Lakehouse for governance tables.
-- One Notebook for metadata scan.
-- One Pipeline for scheduling.
-- One Power BI semantic model and report.
+- Three Notebooks: initialization, sample data, and metadata scan.
+- Three Data Pipelines: initialization, sample data, and metadata scan.
+- One generated Power BI semantic model.
+- One Power BI report or cloned report template.
 - One published App for end users.
 
 ## Step 2: Create the Lakehouse
@@ -67,8 +72,9 @@ Create a Lakehouse, for example:
 SemanticModelGovernanceLH
 ```
 
-Attach this Lakehouse to both notebooks:
+Attach this Lakehouse to all notebooks:
 
+- `fabric\notebooks\initialize_governance_tables.py`
 - `fabric\notebooks\semantic_model_governance_scan.py`
 - `fabric\notebooks\load_sample_governance_data.py`
 
@@ -141,7 +147,7 @@ Expected tables:
 
 ## Step 7: Build the report
 
-Follow [Power BI Report Build Guide](../powerbi/report-build-guide.md).
+The provisioner creates the semantic model. Follow [Power BI Report Build Guide](../powerbi/report-build-guide.md) to create the first report, or provide `-TemplateReportId` to clone an existing template report during provisioning.
 
 Minimum report pages:
 
@@ -169,18 +175,18 @@ Recommended schedule:
 - Active governance program: nightly
 - Large tenant: split by domain/workspace group and stagger schedules
 
-## Optional: Create a blank report shell
+## Optional: Clone a template report
 
-After governance tables exist and you have created or identified the semantic model that points to those tables, rerun the provisioner with:
+After you author a report template once, rerun the provisioner with:
 
 ```powershell
 .\scripts\provision-fabric-solution.ps1 `
   -TenantId "00000000-0000-0000-0000-000000000000" `
-  -CreateReportShell `
-  -ReportSemanticModelId "33333333-3333-3333-3333-333333333333"
+  -TemplateReportWorkspaceId "11111111-1111-1111-1111-111111111111" `
+  -TemplateReportId "22222222-2222-2222-2222-222222222222"
 ```
 
-This creates a blank Power BI report bound to the semantic model. Use [Power BI Report Build Guide](../powerbi/report-build-guide.md) to add the recommended pages and visuals.
+This clones the template report and binds it to the generated governance semantic model. Use [Power BI Report Build Guide](../powerbi/report-build-guide.md) to create the first template report.
 
 ## Step 9: Publish the App
 

@@ -2,15 +2,15 @@
 
 This solution is intended to be consumed through a Power BI report published as an App from the Fabric workspace.
 
-If you already have a semantic model over the governance tables, the provisioner can create a blank report shell:
+The provisioner creates the Direct Lake semantic model over the governance tables. If you already have a template report, the provisioner can clone and bind it to the generated model:
 
 ```powershell
 .\scripts\provision-fabric-solution.ps1 `
-  -CreateReportShell `
-  -ReportSemanticModelId "33333333-3333-3333-3333-333333333333"
+  -TemplateReportWorkspaceId "11111111-1111-1111-1111-111111111111" `
+  -TemplateReportId "22222222-2222-2222-2222-222222222222"
 ```
 
-You still need to add visuals and pages using the guidance below.
+Use this guide to create the first template report. Future deployments can clone and rebind that template automatically.
 
 ## Data source
 

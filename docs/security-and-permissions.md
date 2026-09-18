@@ -21,7 +21,8 @@ The identity running `scripts\provision-fabric-solution.ps1` needs:
 - Azure CLI authentication to the Fabric tenant.
 - Permission to create Fabric workspaces, or access to an existing workspace with the requested name.
 - Permission to create Lakehouses, Notebooks, and Data Pipelines in the solution workspace.
-- Permission to create Power BI reports if using optional report-shell creation.
+- Permission to create or update semantic models in the solution workspace.
+- Permission to clone Power BI reports if using optional template report automation.
 - Optional capacity assignment rights if `-CapacityId` is used during workspace creation.
 
 The script does not request or store passwords. It uses `az login` and in-memory Fabric and Power BI API access tokens from Azure CLI.

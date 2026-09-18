@@ -11,13 +11,14 @@
 
 ## Provisioning updates
 
-Use `scripts\provision-fabric-solution.ps1` when deploying a new environment or refreshing notebook and pipeline definitions. The script reuses existing resources by display name and updates notebook and pipeline definitions in place.
+Use `scripts\provision-fabric-solution.ps1` when deploying a new environment or refreshing notebook, pipeline, and semantic model definitions. The script reuses existing resources by display name and updates notebook, pipeline, and semantic model definitions in place.
 
 Before rerunning in production:
 
 - Confirm the target workspace and Lakehouse names are correct.
 - Confirm any customized notebook code has been committed back to source control.
 - Confirm any customized pipeline definition has been committed back to source control.
+- Confirm any semantic model customization has been committed or captured before rerunning, because generated TMDL updates replace the generated model definition.
 - Use explicit workspace IDs for scan scope when possible.
 
 ## Triggering and scheduling
@@ -25,9 +26,10 @@ Before rerunning in production:
 After provisioning:
 
 1. Trigger `Semantic Model Governance - Load Sample Data` to validate tables and report design.
-2. Trigger `Semantic Model Governance - Scan` for real metadata collection.
-3. Schedule `Semantic Model Governance - Scan` after pilot validation.
-4. Schedule the Power BI report refresh after the scan pipeline completes.
+2. Refresh the generated semantic model and report.
+3. Trigger `Semantic Model Governance - Scan` for real metadata collection.
+4. Schedule `Semantic Model Governance - Scan` after pilot validation.
+5. Schedule the Power BI report refresh after the scan pipeline completes.
 
 ## Scheduling
 

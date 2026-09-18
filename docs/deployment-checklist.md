@@ -18,10 +18,14 @@ Use this checklist to roll out the governance App.
 - [ ] Run `scripts\provision-fabric-solution.ps1`.
 - [ ] Confirm the script output includes workspace ID, Lakehouse ID, and notebook IDs.
 - [ ] Open the Fabric workspace.
-- [ ] Confirm both notebooks are imported.
-- [ ] Confirm both notebooks are attached to the Lakehouse.
+- [ ] Confirm initialization, sample-data, and scan notebooks are imported.
+- [ ] Confirm all notebooks are attached to the Lakehouse.
+- [ ] Confirm `Initialize Governance Tables` notebook exists.
+- [ ] Confirm `Semantic Model Governance - Initialize Tables` pipeline exists.
 - [ ] Confirm `Semantic Model Governance - Load Sample Data` pipeline exists.
 - [ ] Confirm `Semantic Model Governance - Scan` pipeline exists.
+- [ ] Confirm `Semantic Model Governance Semantic Model` exists.
+- [ ] If using a report template, confirm the cloned report exists and is bound to the generated semantic model.
 
 ## Phase 2: Validate with sample data
 
@@ -31,7 +35,8 @@ Use this checklist to roll out the governance App.
 - [ ] Run the sample notebook.
 - [ ] If using automated provisioning, trigger the sample-load pipeline instead of running the notebook directly.
 - [ ] Confirm governance tables are created.
-- [ ] Build or connect the Power BI report to the tables.
+- [ ] Refresh the generated semantic model.
+- [ ] Build, connect, or clone the Power BI report from the generated semantic model.
 - [ ] Confirm sample duplicate findings are visible.
 
 ## Phase 3: Enable real scans
@@ -43,6 +48,7 @@ Use this checklist to roll out the governance App.
 - [ ] Review `semantic_model_warnings`.
 - [ ] Tune thresholds if needed.
 - [ ] Confirm findings and common objects look reasonable.
+- [ ] Refresh the generated semantic model/report.
 
 ## Phase 4: Schedule
 

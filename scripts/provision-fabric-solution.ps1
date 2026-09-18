@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Creates or reuses the Fabric workspace, Lakehouse, notebooks, and pipelines for the semantic model governance app.
+Creates or reuses the Fabric workspace, Lakehouse, notebooks, pipelines, governance semantic model, and optional template report clone for the semantic model governance app.
 
 .DESCRIPTION
 This script uses Azure CLI interactive authentication and Microsoft Fabric REST APIs.
@@ -9,8 +9,10 @@ It does not collect or store Fabric credentials.
 The script is idempotent for the core setup path:
 - Reuses a workspace when the display name already exists.
 - Reuses a Lakehouse when the display name already exists.
-- Creates or updates the two solution notebooks.
+- Creates or updates the solution notebooks.
 - Creates or updates sample-load and scan Data Pipelines by default.
+- Creates or updates a Direct Lake semantic model over the standardized governance tables by default.
+- Can clone and rebind a Power BI template report when a template report ID is supplied.
 - Binds imported notebooks to the Lakehouse through notebook metadata.dependencies.lakehouse.
 
 .EXAMPLE
@@ -29,18 +31,24 @@ param(
     [string]$TenantId,
     [string]$WorkspaceName = "Semantic Model Governance",
     [string]$LakehouseName = "SemanticModelGovernanceLH",
+    [string]$InitializeNotebookName = "Initialize Governance Tables",
     [string]$ScanNotebookName = "Semantic Model Governance Scan",
     [string]$SampleNotebookName = "Load Sample Governance Data",
+    [string]$InitializePipelineName = "Semantic Model Governance - Initialize Tables",
     [string]$ScanPipelineName = "Semantic Model Governance - Scan",
     [string]$SamplePipelineName = "Semantic Model Governance - Load Sample Data",
+    [string]$SemanticModelName = "Semantic Model Governance Semantic Model",
     [string]$ReportName = "Semantic Model Governance Report",
+    [string]$TemplateReportId,
+    [string]$TemplateReportWorkspaceId,
     [string]$CapacityId,
     [string[]]$InitialScanWorkspaceId = @(),
     [string[]]$InitialScanWorkspaceName = @(),
     [switch]$ScanAllAccessibleWorkspaces,
     [switch]$SkipPipelines,
-    [switch]$CreateReportShell,
-    [string]$ReportSemanticModelId,
+    [switch]$SkipInitializationRun,
+    [switch]$SkipSemanticModel,
+    [switch]$SkipReport,
     [switch]$SkipLogin
 )
 
@@ -133,46 +141,6 @@ function Invoke-FabricApi {
         Accept = "application/json"
     }
 
-    function Invoke-PowerBiApi {
-        param(
-            [Parameter(Mandatory)][ValidateSet("GET", "POST", "PATCH", "PUT", "DELETE")][string]$Method,
-            [Parameter(Mandatory)][string]$Url,
-            $Body
-        )
-
-        $token = Get-PowerBiAccessToken
-        $headers = @{
-            Authorization = "Bearer $token"
-            Accept = "application/json"
-        }
-
-        $parameters = @{
-            Method = $Method
-            Uri = $Url
-            Headers = $headers
-            UseBasicParsing = $true
-        }
-
-        if ($PSBoundParameters.ContainsKey("Body")) {
-            $parameters["Body"] = ConvertTo-JsonBody $Body
-            $parameters["ContentType"] = "application/json"
-        }
-
-        try {
-            $response = Invoke-WebRequest @parameters
-        }
-        catch {
-            $bodyText = Read-ErrorBody $_
-            throw "$Method $Url failed. $bodyText"
-        }
-
-        if ([string]::IsNullOrWhiteSpace($response.Content)) {
-            return $null
-        }
-
-        return $response.Content | ConvertFrom-Json
-    }
-
     $parameters = @{
         Method = $Method
         Uri = $Url
@@ -200,6 +168,46 @@ function Invoke-FabricApi {
             throw "$Method $Url returned 202 Accepted without a Location header."
         }
         return Wait-FabricOperation -Location $location -RetryAfter $retryAfter
+    }
+
+    if ([string]::IsNullOrWhiteSpace($response.Content)) {
+        return $null
+    }
+
+    return $response.Content | ConvertFrom-Json
+}
+
+function Invoke-PowerBiApi {
+    param(
+        [Parameter(Mandatory)][ValidateSet("GET", "POST", "PATCH", "PUT", "DELETE")][string]$Method,
+        [Parameter(Mandatory)][string]$Url,
+        $Body
+    )
+
+    $token = Get-PowerBiAccessToken
+    $headers = @{
+        Authorization = "Bearer $token"
+        Accept = "application/json"
+    }
+
+    $parameters = @{
+        Method = $Method
+        Uri = $Url
+        Headers = $headers
+        UseBasicParsing = $true
+    }
+
+    if ($PSBoundParameters.ContainsKey("Body")) {
+        $parameters["Body"] = ConvertTo-JsonBody $Body
+        $parameters["ContentType"] = "application/json"
+    }
+
+    try {
+        $response = Invoke-WebRequest @parameters
+    }
+    catch {
+        $bodyText = Read-ErrorBody $_
+        throw "$Method $Url failed. $bodyText"
     }
 
     if ([string]::IsNullOrWhiteSpace($response.Content)) {
@@ -439,6 +447,19 @@ function New-DefinitionFromJson {
     }
 }
 
+function New-TextDefinitionPart {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Content
+    )
+
+    return @{
+        path = $Path
+        payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Content))
+        payloadType = "InlineBase64"
+    }
+}
+
 function New-OrUpdateNotebook {
     param(
         [Parameter(Mandatory)][string]$WorkspaceId,
@@ -477,6 +498,74 @@ function New-OrUpdateNotebook {
         throw "Notebook '$NotebookName' was created asynchronously but could not be found after polling."
     }
     return $notebook
+}
+
+function Wait-FabricItemJob {
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceId,
+        [Parameter(Mandatory)][string]$ItemId,
+        [Parameter(Mandatory)][string]$JobInstanceId,
+        [int]$TimeoutMinutes = 60
+    )
+
+    Write-Host "Waiting for job instance $JobInstanceId to complete..."
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 10
+        $job = Invoke-FabricApi -Method GET -Url "$FabricApiBase/workspaces/$WorkspaceId/items/$ItemId/jobs/instances/$JobInstanceId"
+        $status = [string]$job.status
+        if ([string]::IsNullOrWhiteSpace($status)) {
+            $status = [string]$job.state
+        }
+        if ($status) {
+            Write-Host "  job status: $status"
+        }
+
+        if ($status -in @("Completed", "Succeeded", "Success")) {
+            return $job
+        }
+
+        if ($status -in @("Failed", "Cancelled", "Canceled")) {
+            throw "Fabric job $JobInstanceId failed: $($job | ConvertTo-Json -Depth 20 -Compress)"
+        }
+    }
+
+    throw "Fabric job $JobInstanceId did not complete within $TimeoutMinutes minutes."
+}
+
+function Start-FabricNotebookRun {
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceId,
+        [Parameter(Mandatory)][string]$NotebookId,
+        [Parameter(Mandatory)][string]$LakehouseId,
+        [Parameter(Mandatory)][string]$LakehouseNameForRun
+    )
+
+    $body = @{
+        executionData = @{
+            configuration = @{
+                defaultLakehouse = @{
+                    id = $LakehouseId
+                    name = $LakehouseNameForRun
+                }
+                useStarterPool = $true
+            }
+        }
+    }
+
+    Write-Host "Starting notebook job for item $NotebookId."
+    $job = Invoke-FabricApi -Method POST -Url "$FabricApiBase/workspaces/$WorkspaceId/items/$NotebookId/jobs/instances?jobType=RunNotebook" -Body $body
+    $jobId = [string]$job.id
+    if ([string]::IsNullOrWhiteSpace($jobId)) {
+        $jobId = [string]$job.jobInstanceId
+    }
+    if ($jobId) {
+        return Wait-FabricItemJob -WorkspaceId $WorkspaceId -ItemId $NotebookId -JobInstanceId $jobId
+    }
+
+    Write-Host "Notebook run was accepted, but no job instance ID was returned. Waiting briefly before continuing."
+    Start-Sleep -Seconds 30
+    return $job
 }
 
 function New-PipelineDefinition {
@@ -550,14 +639,285 @@ function New-OrUpdatePipeline {
     return $pipeline
 }
 
-function New-OrGetReportShell {
+function Get-GovernanceModelTables {
+    return @(
+        @{
+            name = "semantic_model_scan_runs"
+            keyColumns = @("run_id")
+            hiddenColumns = @()
+            columns = @(
+                @{ name = "run_id"; type = "string" },
+                @{ name = "started_at_utc"; type = "string" },
+                @{ name = "completed_at_utc"; type = "string" },
+                @{ name = "scan_status"; type = "string" },
+                @{ name = "workspace_count"; type = "int64" },
+                @{ name = "model_count"; type = "int64" },
+                @{ name = "finding_count"; type = "int64" },
+                @{ name = "warning_count"; type = "int64" }
+            )
+            measures = @(
+                @{ name = "Scan Runs"; expression = "DISTINCTCOUNT(semantic_model_scan_runs[run_id])"; format = "#,##0" },
+                @{ name = "Completed Scan Runs"; expression = "CALCULATE([Scan Runs], semantic_model_scan_runs[scan_status] = `"completed`")"; format = "#,##0" },
+                @{ name = "Latest Model Count"; expression = "MAX(semantic_model_scan_runs[model_count])"; format = "#,##0" },
+                @{ name = "Latest Finding Count"; expression = "MAX(semantic_model_scan_runs[finding_count])"; format = "#,##0" }
+            )
+        },
+        @{
+            name = "semantic_model_inventory"
+            keyColumns = @()
+            hiddenColumns = @("run_id", "workspace_id", "model_id")
+            columns = @(
+                @{ name = "run_id"; type = "string" },
+                @{ name = "workspace_id"; type = "string" },
+                @{ name = "workspace_name"; type = "string" },
+                @{ name = "model_id"; type = "string" },
+                @{ name = "model_name"; type = "string" },
+                @{ name = "table_count"; type = "int64" },
+                @{ name = "column_count"; type = "int64" },
+                @{ name = "measure_count"; type = "int64" },
+                @{ name = "relationship_count"; type = "int64" },
+                @{ name = "data_source_count"; type = "int64" },
+                @{ name = "warning_count"; type = "int64" }
+            )
+            measures = @(
+                @{ name = "Models Scanned"; expression = "DISTINCTCOUNT(semantic_model_inventory[model_id])"; format = "#,##0" },
+                @{ name = "Workspaces Scanned"; expression = "DISTINCTCOUNT(semantic_model_inventory[workspace_id])"; format = "#,##0" }
+            )
+        },
+        @{
+            name = "semantic_model_objects"
+            keyColumns = @()
+            hiddenColumns = @("run_id", "workspace_id", "model_id")
+            columns = @(
+                @{ name = "run_id"; type = "string" },
+                @{ name = "workspace_id"; type = "string" },
+                @{ name = "workspace_name"; type = "string" },
+                @{ name = "model_id"; type = "string" },
+                @{ name = "model_name"; type = "string" },
+                @{ name = "object_type"; type = "string" },
+                @{ name = "object_name"; type = "string" }
+            )
+            measures = @(
+                @{ name = "Model Object Count"; expression = "COUNTROWS(semantic_model_objects)"; format = "#,##0" }
+            )
+        },
+        @{
+            name = "semantic_model_findings"
+            keyColumns = @("finding_id")
+            hiddenColumns = @("run_id", "finding_id", "left_workspace_id", "left_model_id", "right_workspace_id", "right_model_id")
+            columns = @(
+                @{ name = "run_id"; type = "string" },
+                @{ name = "finding_id"; type = "string" },
+                @{ name = "classification"; type = "string" },
+                @{ name = "confidence"; type = "string" },
+                @{ name = "duplicate_score"; type = "double" },
+                @{ name = "overlap_score"; type = "double" },
+                @{ name = "left_workspace_id"; type = "string" },
+                @{ name = "left_workspace_name"; type = "string" },
+                @{ name = "left_model_id"; type = "string" },
+                @{ name = "left_model_name"; type = "string" },
+                @{ name = "right_workspace_id"; type = "string" },
+                @{ name = "right_workspace_name"; type = "string" },
+                @{ name = "right_model_id"; type = "string" },
+                @{ name = "right_model_name"; type = "string" },
+                @{ name = "shared_tables"; type = "int64" },
+                @{ name = "shared_columns"; type = "int64" },
+                @{ name = "shared_measures"; type = "int64" },
+                @{ name = "shared_relationships"; type = "int64" },
+                @{ name = "shared_data_sources"; type = "int64" },
+                @{ name = "warnings"; type = "string" }
+            )
+            measures = @(
+                @{ name = "Finding Count"; expression = "COUNTROWS(semantic_model_findings)"; format = "#,##0" },
+                @{ name = "Likely Duplicate Count"; expression = "CALCULATE([Finding Count], semantic_model_findings[classification] = `"likely_duplicate`")"; format = "#,##0" },
+                @{ name = "High Overlap Count"; expression = "CALCULATE([Finding Count], semantic_model_findings[classification] = `"high_overlap`")"; format = "#,##0" },
+                @{ name = "Average Duplicate Score"; expression = "AVERAGE(semantic_model_findings[duplicate_score])"; format = "0.00%" },
+                @{ name = "Average Overlap Score"; expression = "AVERAGE(semantic_model_findings[overlap_score])"; format = "0.00%" },
+                @{ name = "Max Duplicate Score"; expression = "MAX(semantic_model_findings[duplicate_score])"; format = "0.00%" },
+                @{ name = "High Confidence Findings"; expression = "CALCULATE([Finding Count], semantic_model_findings[confidence] = `"high`")"; format = "#,##0" }
+            )
+        },
+        @{
+            name = "semantic_model_common_objects"
+            keyColumns = @()
+            hiddenColumns = @("run_id", "finding_id")
+            columns = @(
+                @{ name = "run_id"; type = "string" },
+                @{ name = "finding_id"; type = "string" },
+                @{ name = "object_type"; type = "string" },
+                @{ name = "object_name"; type = "string" }
+            )
+            measures = @(
+                @{ name = "Common Object Count"; expression = "COUNTROWS(semantic_model_common_objects)"; format = "#,##0" }
+            )
+        },
+        @{
+            name = "semantic_model_warnings"
+            keyColumns = @()
+            hiddenColumns = @("run_id", "workspace_id", "model_id")
+            columns = @(
+                @{ name = "run_id"; type = "string" },
+                @{ name = "workspace_id"; type = "string" },
+                @{ name = "workspace_name"; type = "string" },
+                @{ name = "model_id"; type = "string" },
+                @{ name = "model_name"; type = "string" },
+                @{ name = "stage"; type = "string" },
+                @{ name = "message"; type = "string" }
+            )
+            measures = @(
+                @{ name = "Warning Count"; expression = "COUNTROWS(semantic_model_warnings)"; format = "#,##0" }
+            )
+        }
+    )
+}
+
+function New-GovernanceTableTmdl {
+    param([Parameter(Mandatory)]$Table)
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $tableName = [string]$Table.name
+    $lines.Add("table $tableName")
+    $lines.Add("")
+
+    foreach ($measure in $Table.measures) {
+        $lines.Add("`tmeasure '$($measure.name)' = $($measure.expression)")
+        $lines.Add("`t`tformatString: $($measure.format)")
+        $lines.Add("")
+    }
+
+    foreach ($column in $Table.columns) {
+        $columnName = [string]$column.name
+        $lines.Add("`tcolumn $columnName")
+        $lines.Add("`t`tdataType: $($column.type)")
+        if ($Table.hiddenColumns -contains $columnName) {
+            $lines.Add("`t`tisHidden")
+        }
+        if ($Table.keyColumns -contains $columnName) {
+            $lines.Add("`t`tisKey")
+        }
+        if ($column.type -in @("int64", "double", "decimal")) {
+            $lines.Add("`t`tsummarizeBy: none")
+        }
+        $lines.Add("`t`tsourceColumn: $columnName")
+        $lines.Add("")
+    }
+
+    $lines.Add("`tpartition $tableName = entity")
+    $lines.Add("`t`tmode: directLake")
+    $lines.Add("`t`tsource")
+    $lines.Add("`t`t`tentityName: $tableName")
+    $lines.Add("`t`t`tschemaName: dbo")
+    $lines.Add("`t`t`texpressionSource: DL_Lakehouse")
+    return ($lines -join "`n")
+}
+
+function New-GovernanceRelationshipsTmdl {
+    $lines = @(
+        "relationship scan_runs_to_inventory",
+        "`tfromColumn: semantic_model_inventory.run_id",
+        "`ttoColumn: semantic_model_scan_runs.run_id",
+        "",
+        "relationship scan_runs_to_findings",
+        "`tfromColumn: semantic_model_findings.run_id",
+        "`ttoColumn: semantic_model_scan_runs.run_id",
+        "",
+        "relationship scan_runs_to_warnings",
+        "`tfromColumn: semantic_model_warnings.run_id",
+        "`ttoColumn: semantic_model_scan_runs.run_id",
+        "",
+        "relationship findings_to_common_objects",
+        "`tfromColumn: semantic_model_common_objects.finding_id",
+        "`ttoColumn: semantic_model_findings.finding_id"
+    )
+    return ($lines -join "`n")
+}
+
+function New-GovernanceSemanticModelDefinition {
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceId,
+        [Parameter(Mandatory)][string]$LakehouseId
+    )
+
+    $tables = Get-GovernanceModelTables
+    $pbism = @{
+        version = "4.2"
+        settings = @{
+            qnaEnabled = $true
+        }
+    } | ConvertTo-Json -Depth 10
+    $database = "database`n`tcompatibilityLevel: 1702`n`tcompatibilityMode: powerBI"
+    $modelLines = New-Object System.Collections.Generic.List[string]
+    $modelLines.Add("model Model")
+    $modelLines.Add("`tculture: en-US")
+    $modelLines.Add("`tdefaultPowerBIDataSourceVersion: powerBI_V3")
+    $modelLines.Add("`tdiscourageImplicitMeasures")
+    $modelLines.Add("`tsourceQueryCulture: en-US")
+    $modelLines.Add("")
+    $modelLines.Add("expression DL_Lakehouse =")
+    $modelLines.Add("`tlet")
+    $modelLines.Add("`t`tSource = AzureStorage.DataLake(`"https://onelake.dfs.fabric.microsoft.com/$WorkspaceId/$LakehouseId`", [HierarchicalNavigation=true])")
+    $modelLines.Add("`tin")
+    $modelLines.Add("`t`tSource")
+    $modelLines.Add("")
+    foreach ($table in $tables) {
+        $modelLines.Add("ref table $($table.name)")
+    }
+
+    $parts = New-Object System.Collections.Generic.List[object]
+    $parts.Add((New-TextDefinitionPart -Path "definition.pbism" -Content $pbism))
+    $parts.Add((New-TextDefinitionPart -Path "definition/database.tmdl" -Content $database))
+    $parts.Add((New-TextDefinitionPart -Path "definition/model.tmdl" -Content ($modelLines -join "`n")))
+    $parts.Add((New-TextDefinitionPart -Path "definition/relationships.tmdl" -Content (New-GovernanceRelationshipsTmdl)))
+    foreach ($table in $tables) {
+        $parts.Add((New-TextDefinitionPart -Path "definition/tables/$($table.name).tmdl" -Content (New-GovernanceTableTmdl -Table $table)))
+    }
+
+    return @{
+        format = "TMDL"
+        parts = $parts.ToArray()
+    }
+}
+
+function New-OrUpdateSemanticModel {
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceId,
+        [Parameter(Mandatory)][string]$LakehouseId
+    )
+
+    $definition = New-GovernanceSemanticModelDefinition -WorkspaceId $WorkspaceId -LakehouseId $LakehouseId
+    $existing = Get-FabricItemByName -WorkspaceId $WorkspaceId -Name $SemanticModelName -Type "SemanticModel"
+
+    if ($existing) {
+        Write-Host "Updating semantic model '$SemanticModelName' ($($existing.id))."
+        Invoke-FabricApi -Method POST -Url "$FabricApiBase/workspaces/$WorkspaceId/semanticModels/$($existing.id)/updateDefinition" -Body @{ definition = $definition } | Out-Null
+        return $existing
+    }
+
+    Write-Host "Creating semantic model '$SemanticModelName'."
+    $created = Invoke-FabricApi -Method POST -Url "$FabricApiBase/workspaces/$WorkspaceId/semanticModels" -Body @{
+        displayName = $SemanticModelName
+        description = "Direct Lake semantic model for duplicate semantic model governance results."
+        definition = $definition
+    }
+    if ($created -and $created.id) {
+        return $created
+    }
+
+    $semanticModel = Get-FabricItemByName -WorkspaceId $WorkspaceId -Name $SemanticModelName -Type "SemanticModel"
+    if (-not $semanticModel) {
+        throw "Semantic model '$SemanticModelName' was created asynchronously but could not be found after polling."
+    }
+    return $semanticModel
+}
+
+function New-OrCloneReport {
     param(
         [Parameter(Mandatory)][string]$WorkspaceId,
         [Parameter(Mandatory)][string]$SemanticModelId
     )
 
     if ([string]::IsNullOrWhiteSpace($SemanticModelId)) {
-        throw "-CreateReportShell requires -ReportSemanticModelId. Create or identify the Power BI semantic model first, then rerun the script with both parameters."
+        throw "Report creation requires a semantic model ID."
     }
 
     $reports = Invoke-PowerBiApi -Method GET -Url "$PowerBiApiBase/groups/$WorkspaceId/reports"
@@ -567,12 +927,23 @@ function New-OrGetReportShell {
         return $existing
     }
 
-    Write-Host "Creating blank Power BI report shell '$ReportName' bound to semantic model $SemanticModelId."
+    if ([string]::IsNullOrWhiteSpace($TemplateReportId)) {
+        Write-Host "No template report ID supplied. Skipping report creation. Create the report from the generated semantic model, or rerun with -TemplateReportId."
+        return $null
+    }
+
+    $sourceWorkspaceId = $TemplateReportWorkspaceId
+    if ([string]::IsNullOrWhiteSpace($sourceWorkspaceId)) {
+        $sourceWorkspaceId = $WorkspaceId
+    }
+
+    Write-Host "Cloning report template $TemplateReportId to '$ReportName' and binding it to semantic model $SemanticModelId."
     $body = @{
         name = $ReportName
-        datasetId = $SemanticModelId
+        targetModelId = $SemanticModelId
+        targetWorkspaceId = $WorkspaceId
     }
-    return Invoke-PowerBiApi -Method POST -Url "$PowerBiApiBase/groups/$WorkspaceId/reports" -Body $body
+    return Invoke-PowerBiApi -Method POST -Url "$PowerBiApiBase/groups/$sourceWorkspaceId/reports/$TemplateReportId/Clone" -Body $body
 }
 
 Assert-CommandAvailable -Name "az"
@@ -581,15 +952,25 @@ Invoke-AzLogin
 $workspace = New-OrGetWorkspace
 $lakehouse = New-OrGetLakehouse -WorkspaceId $workspace.id
 
+$initializeNotebookPath = Join-Path $RepoRoot "fabric\notebooks\initialize_governance_tables.py"
 $sampleNotebookPath = Join-Path $RepoRoot "fabric\notebooks\load_sample_governance_data.py"
 $scanNotebookPath = Join-Path $RepoRoot "fabric\notebooks\semantic_model_governance_scan.py"
 
+$initializeNotebook = New-OrUpdateNotebook -WorkspaceId $workspace.id -LakehouseId $lakehouse.id -NotebookName $InitializeNotebookName -SourcePath $initializeNotebookPath
 $sampleNotebook = New-OrUpdateNotebook -WorkspaceId $workspace.id -LakehouseId $lakehouse.id -NotebookName $SampleNotebookName -SourcePath $sampleNotebookPath
 $scanNotebook = New-OrUpdateNotebook -WorkspaceId $workspace.id -LakehouseId $lakehouse.id -NotebookName $ScanNotebookName -SourcePath $scanNotebookPath -ApplyScanConfiguration
 
+$initializePipeline = $null
 $samplePipeline = $null
 $scanPipeline = $null
 if (-not $SkipPipelines) {
+    $initializePipeline = New-OrUpdatePipeline `
+        -WorkspaceId $workspace.id `
+        -PipelineName $InitializePipelineName `
+        -NotebookId $initializeNotebook.id `
+        -ActivityName "Initialize governance tables" `
+        -Description "Creates empty standardized governance Delta tables in the solution Lakehouse."
+
     $samplePipeline = New-OrUpdatePipeline `
         -WorkspaceId $workspace.id `
         -PipelineName $SamplePipelineName `
@@ -605,9 +986,22 @@ if (-not $SkipPipelines) {
         -Description "Runs the semantic model duplicate governance scan and writes results to the solution Lakehouse."
 }
 
+$initializationRun = $null
+if (-not $SkipInitializationRun) {
+    $initializationRun = Start-FabricNotebookRun -WorkspaceId $workspace.id -NotebookId $initializeNotebook.id -LakehouseId $lakehouse.id -LakehouseNameForRun $LakehouseName
+}
+
+$semanticModel = $null
+if (-not $SkipSemanticModel) {
+    $semanticModel = New-OrUpdateSemanticModel -WorkspaceId $workspace.id -LakehouseId $lakehouse.id
+}
+
 $reportShell = $null
-if ($CreateReportShell) {
-    $reportShell = New-OrGetReportShell -WorkspaceId $workspace.id -SemanticModelId $ReportSemanticModelId
+if (-not $SkipReport -and $semanticModel) {
+    $reportShell = New-OrCloneReport -WorkspaceId $workspace.id -SemanticModelId $semanticModel.id
+}
+elseif (-not $SkipReport) {
+    Write-Host "Skipping report creation because semantic model creation was skipped."
 }
 
 $summary = [ordered]@{
@@ -615,21 +1009,30 @@ $summary = [ordered]@{
     workspaceId = $workspace.id
     lakehouseName = $LakehouseName
     lakehouseId = $lakehouse.id
+    initializeNotebookName = $InitializeNotebookName
+    initializeNotebookId = $initializeNotebook.id
     sampleNotebookName = $SampleNotebookName
     sampleNotebookId = $sampleNotebook.id
     scanNotebookName = $ScanNotebookName
     scanNotebookId = $scanNotebook.id
+    initializePipelineName = if ($initializePipeline) { $InitializePipelineName } else { $null }
+    initializePipelineId = if ($initializePipeline) { $initializePipeline.id } else { $null }
     samplePipelineName = if ($samplePipeline) { $SamplePipelineName } else { $null }
     samplePipelineId = if ($samplePipeline) { $samplePipeline.id } else { $null }
     scanPipelineName = if ($scanPipeline) { $ScanPipelineName } else { $null }
     scanPipelineId = if ($scanPipeline) { $scanPipeline.id } else { $null }
+    initializationRunAttempted = -not $SkipInitializationRun
+    semanticModelName = if ($semanticModel) { $SemanticModelName } else { $null }
+    semanticModelId = if ($semanticModel) { $semanticModel.id } else { $null }
+    reportTemplateId = if ($TemplateReportId) { $TemplateReportId } else { $null }
     reportName = if ($reportShell) { $ReportName } else { $null }
     reportId = if ($reportShell) { $reportShell.id } else { $null }
     nextSteps = @(
-        "Open the Fabric workspace and confirm the Lakehouse, notebooks, and Data Pipelines are present.",
+        "Open the Fabric workspace and confirm the Lakehouse, notebooks, Data Pipelines, and semantic model are present.",
         "Attach or create a Fabric Environment that installs this package if your workspace does not support inline package install.",
-        "Trigger the sample-load pipeline first, then build or connect the Power BI report from the Lakehouse tables.",
-        "Configure scan scope, trigger the scan pipeline, then schedule it through Fabric."
+        "Trigger the sample-load pipeline to validate sample data, then refresh the semantic model/report.",
+        "If no template report was supplied, create the report from the generated semantic model using the report build guide.",
+        "Configure scan scope, trigger the scan pipeline, refresh the semantic model/report, then schedule the pipeline."
     )
 }
 

@@ -7,7 +7,7 @@ The solution separates metadata collection, duplicate scoring, storage, and end-
 | Component | Role |
 |---|---|
 | Fabric workspace | Hosts the Lakehouse, notebook, pipeline, semantic model, report, and App. |
-| Provisioning script | Automates workspace, Lakehouse, notebook, Data Pipeline, and optional report-shell creation through Azure CLI, Fabric REST APIs, and Power BI REST APIs. |
+| Provisioning script | Automates workspace, Lakehouse, notebook, Data Pipeline, semantic model, and optional report-template clone through Azure CLI, Fabric REST APIs, and Power BI REST APIs. |
 | Lakehouse or Warehouse | Stores scan runs, inventory, findings, common objects, and warnings. |
 | Fabric notebook | Reads Power BI/Fabric metadata, calculates scores, and writes Delta tables. |
 | Fabric Data Pipeline | Schedules the notebook and provides operational monitoring. |
@@ -35,12 +35,15 @@ The automated provisioner creates these items up front:
 
 - workspace
 - Lakehouse
+- initialization notebook
 - sample data notebook
 - semantic model scan notebook
+- initialization Data Pipeline
 - sample-load Data Pipeline
 - scan Data Pipeline
+- Direct Lake semantic model over standardized governance tables
 
-The full visual Power BI report is built after the first sample or real run creates governance tables. The provisioner can create a blank report shell when an existing semantic model ID is supplied.
+The full visual Power BI report is built once from the generated semantic model. Future deployments can clone and rebind that template report by passing `-TemplateReportId`.
 
 ## Why precomputed results
 
